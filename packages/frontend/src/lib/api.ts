@@ -1128,6 +1128,7 @@ export const knowledgeGraph = {
         connectorId?: string | null;
         mcpServerId?: string | null;
         status?: string;
+        body?: string | null;
       },
     ) => request<KgSkill>('/api/knowledge-graph/skills', { token, method: 'POST', body }),
     generate: (token: string, mcpServerId?: string) =>
@@ -1143,8 +1144,10 @@ export const knowledgeGraph = {
     update: (
       token: string,
       id: string,
-      patch: { title?: string; whenToUse?: string; instruction?: string; status?: string },
+      patch: { title?: string; whenToUse?: string; instruction?: string; body?: string | null; status?: string },
     ) => request<KgSkill>(`/api/knowledge-graph/skills/${id}`, { token, method: 'PATCH', body: patch }),
+    versions: (token: string, id: string) =>
+      request<KgSkillVersion[]>(`/api/knowledge-graph/skills/${id}/versions`, { token }),
     remove: (token: string, id: string) =>
       request<{ ok: boolean }>(`/api/knowledge-graph/skills/${id}`, { token, method: 'DELETE' }),
   },
@@ -1162,6 +1165,23 @@ export interface KgSkill {
   confidence: number;
   evidenceCount: number;
   status: string;
+  /** manual | llm | finder */
+  source?: string;
+  /** Optional full procedure (markdown), served on demand by skill_get. */
+  body?: string | null;
+  version?: number;
+  useCount?: number;
+  lastUsedAt?: string | null;
+}
+
+export interface KgSkillVersion {
+  version: number;
+  title: string;
+  whenToUse: string;
+  instruction: string;
+  body: string | null;
+  editedByUserId: string | null;
+  createdAt: string;
 }
 
 // Server settings (public)
@@ -1678,7 +1698,7 @@ export const mcpServers = {
     request<{ calls30d: number; lastCallAt: string | null }>(`/api/mcp-servers/${id}/activity`, { token }),
   create: (data: { name: string; slug?: string; description?: string; instructions?: string }, token: string) =>
     request<any>('/api/mcp-servers', { method: 'POST', body: data, token }),
-  update: (id: string, data: { name?: string; slug?: string; description?: string; instructions?: string; isActive?: boolean }, token: string) =>
+  update: (id: string, data: { name?: string; slug?: string; description?: string; instructions?: string; isActive?: boolean; skillsDelivery?: 'auto' | 'inline' | 'index' }, token: string) =>
     request<any>(`/api/mcp-servers/${id}`, { method: 'PUT', body: data, token }),
   delete: (id: string, token: string) =>
     request(`/api/mcp-servers/${id}`, { method: 'DELETE', token }),
