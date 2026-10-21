@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-import { users, server, sso, knowledgeGraph, ApiError, type LinkableProvider, type MemberLearning } from '@/lib/api';
+import { users, server, sso, social, knowledgeGraph, ApiError, type LinkableProvider, type MemberLearning, type SocialConnection } from '@/lib/api';
+import { ProviderMark } from '@/components/provider-mark';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useToast } from '@/components/toast';
 import { Button } from '@/components/ui/button';
@@ -43,11 +45,16 @@ export default function SettingsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // A passwordless (social) account confirms deletion with a fresh sign-in.
+  const [deleteNeedsReauth, setDeleteNeedsReauth] = useState(false);
   const [blockingOrgs, setBlockingOrgs] = useState<{ id: string; name: string }[] | null>(null);
 
   // Connected accounts
   const [linkable, setLinkable] = useState<LinkableProvider[]>([]);
   const [linkBusy, setLinkBusy] = useState<string | null>(null);
+  // Cloud social sign-in (Google, Microsoft, GitHub).
+  const [socialConnections, setSocialConnections] = useState<SocialConnection[]>([]);
+  const [hasPassword, setHasPassword] = useState(true);
 
   // Load server info
   useEffect(() => {
@@ -117,10 +124,26 @@ export default function SettingsPage() {
     sso.myProviders(token).then(setLinkable).catch(() => setLinkable([]));
   };
 
+  const loadSocial = () => {
+    if (!token || !isCloud) return;
+    social
+      .identities(token)
+      .then((r) => {
+        setSocialConnections(r.providers);
+        setHasPassword(r.hasPassword);
+      })
+      .catch(() => setSocialConnections([]));
+  };
+
   useEffect(() => {
     loadLinkable();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  useEffect(() => {
+    loadSocial();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, isCloud]);
 
   // The callback lands back here with the outcome in the query string. Read it
   // once and strip it, so a refresh does not replay the same toast.
@@ -135,6 +158,7 @@ export default function SettingsPage() {
     } else {
       toast.show({ tone: 'success', title: 'Account connected' });
       loadLinkable();
+      loadSocial();
     }
     window.history.replaceState({}, '', window.location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,6 +198,33 @@ export default function SettingsPage() {
     }
   };
 
+  const handleSocialLink = async (p: SocialConnection) => {
+    if (!token) return;
+    setLinkBusy(`social:${p.id}`);
+    try {
+      const { authorizationUrl } = await social.startLink(p.id, '/settings', token);
+      window.location.assign(authorizationUrl);
+    } catch (err: any) {
+      toast.show({ tone: 'error', title: 'Could not connect', description: err.message });
+      setLinkBusy(null);
+    }
+  };
+
+  const handleSocialUnlink = async (p: SocialConnection) => {
+    if (!token) return;
+    if (!confirm(`Disconnect ${p.name}? You will no longer be able to sign in with it.`)) return;
+    setLinkBusy(`social:${p.id}`);
+    try {
+      await social.unlink(p.id, token);
+      toast.show({ tone: 'success', title: 'Account disconnected' });
+      loadSocial();
+    } catch (err: any) {
+      toast.show({ tone: 'error', title: 'Could not disconnect', description: err.message });
+    } finally {
+      setLinkBusy(null);
+    }
+  };
+
   const handleSaveProfile = async () => {
     if (!token) return;
     try {
@@ -195,12 +246,18 @@ export default function SettingsPage() {
     setDeleteError(null);
     setBlockingOrgs(null);
     try {
-      await users.deleteSelf({ password: deletePassword, confirm: 'DELETE' }, token);
+      await users.deleteSelf(
+        hasPassword ? { password: deletePassword, confirm: 'DELETE' } : { confirm: 'DELETE' },
+        token,
+      );
       logout();
     } catch (err: any) {
       if (err instanceof ApiError) {
-        if (err.status === 401) {
-          setDeleteError('Incorrect password.');
+        if (err.status === 403 && err.body?.code === 'reauth_required') {
+          setDeleteNeedsReauth(true);
+          setDeleteError(err.message);
+        } else if (err.status === 401) {
+          setDeleteError(hasPassword ? 'Incorrect password.' : err.message || 'Failed to delete account.');
         } else if (err.status === 409 && Array.isArray(err.body?.blockingOrganizations)) {
           setBlockingOrgs(err.body.blockingOrganizations);
           setDeleteError(err.body?.error || 'You are the only admin of these organizations.');
@@ -214,8 +271,29 @@ export default function SettingsPage() {
     }
   };
 
+  /** Sign in again with a connected provider, then come back to this dialog. */
+  const reauthForDelete = async () => {
+    const provider = socialConnections.find((p) => p.connected);
+    if (!provider) return;
+    try {
+      const { authorizationUrl } = await social.start(provider.id, '/settings?delete=1');
+      window.location.assign(authorizationUrl);
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Could not start the sign-in.');
+    }
+  };
+
+  // Back from that sign-in: reopen the dialog.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('delete') !== '1') return;
+    setDeleteOpen(true);
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
+
   const resetDeleteDialog = () => {
     setDeleteOpen(false);
+    setDeleteNeedsReauth(false);
     setDeletePassword('');
     setDeleteConfirm('');
     setDeleteError(null);
@@ -445,6 +523,55 @@ export default function SettingsPage() {
         </Card>
       )}
 
+      {/* Sign-in methods (Cloud social sign-in) */}
+      {isCloud && socialConnections.length > 0 && (
+        <Card className="p-[22px]" data-testid="sign-in-methods">
+          <h3 className="text-sm font-semibold text-[var(--text)] mb-2">Sign-in methods</h3>
+          <p className="text-sm text-[var(--text-2)] mb-4">
+            Sign in to AnythingMCP with one of these accounts instead of your password.
+          </p>
+          {!hasPassword && (
+            <p className="text-sm text-[var(--text-2)] mb-4">
+              Your account has no password yet.{' '}
+              <Link href="/forgot-password" className="text-[var(--brand)] underline">
+                Set a password
+              </Link>{' '}
+              to also sign in with your email address.
+            </p>
+          )}
+          <div className="space-y-2 max-w-md">
+            {socialConnections.map((p) => (
+              <div
+                key={p.id}
+                className="rounded-[9px] border border-[var(--border)] p-3 flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0 flex items-center gap-2.5">
+                  <ProviderMark type={p.id} />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--text)]">{p.name}</div>
+                    <div className="text-[11.5px] text-[var(--text-3)] mt-0.5 truncate">
+                      {p.connected
+                        ? [p.email, p.lastLoginAt ? `last used ${new Date(p.lastLoginAt).toLocaleDateString()}` : null]
+                            .filter(Boolean)
+                            .join(' · ') || 'Connected'
+                        : 'Not connected'}
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant={p.connected ? 'secondary' : 'primary'}
+                  disabled={linkBusy === `social:${p.id}`}
+                  onClick={() => (p.connected ? handleSocialUnlink(p) : handleSocialLink(p))}
+                >
+                  {linkBusy === `social:${p.id}` ? 'Working...' : p.connected ? 'Disconnect' : 'Connect'}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {/* MCP Auth */}
       <Card className="p-[22px]">
         <h3 className="text-sm font-semibold text-[var(--text)] mb-2">MCP Server Authentication</h3>
@@ -531,7 +658,11 @@ export default function SettingsPage() {
           <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[85dvh] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow)]">
             <Dialog.Title className="text-base font-semibold text-[var(--text)] mb-2">Delete account</Dialog.Title>
             <Dialog.Description className="text-sm text-[var(--text-2)] mb-4">
-              This action cannot be undone. Enter your password and type <strong>DELETE</strong> to confirm.
+              {hasPassword ? (
+                <>This action cannot be undone. Enter your password and type <strong>DELETE</strong> to confirm.</>
+              ) : (
+                <>This action cannot be undone. Type <strong>DELETE</strong> to confirm. If you signed in more than 10 minutes ago, you will be asked to sign in again first.</>
+              )}
             </Dialog.Description>
 
             {blockingOrgs && blockingOrgs.length > 0 && (
@@ -549,15 +680,17 @@ export default function SettingsPage() {
             )}
 
             <div className="space-y-3">
-              <div>
-                <label className={labelClass}>Password</label>
-                <input
-                  type="password"
-                  value={deletePassword}
-                  onChange={(e) => setDeletePassword(e.target.value)}
-                  className={inputClass}
-                />
-              </div>
+              {hasPassword && (
+                <div>
+                  <label className={labelClass}>Password</label>
+                  <input
+                    type="password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+              )}
               <div>
                 <label className={labelClass}>Type <code className="font-mono">DELETE</code> to confirm</label>
                 <input
@@ -571,6 +704,11 @@ export default function SettingsPage() {
               {deleteError && !blockingOrgs && (
                 <p className="text-sm text-[var(--danger)]">{deleteError}</p>
               )}
+              {deleteNeedsReauth && socialConnections.some((p) => p.connected) && (
+                <Button variant="secondary" onClick={reauthForDelete}>
+                  Sign in again with {socialConnections.find((p) => p.connected)?.name}
+                </Button>
+              )}
             </div>
 
             <div className="flex gap-2 justify-end mt-6">
@@ -580,7 +718,7 @@ export default function SettingsPage() {
               <Button
                 variant="danger"
                 onClick={handleDeleteAccount}
-                disabled={deleting || deleteConfirm !== 'DELETE' || !deletePassword}
+                disabled={deleting || deleteConfirm !== 'DELETE' || (hasPassword && !deletePassword)}
               >
                 {deleting ? 'Deleting…' : 'Delete my account'}
               </Button>
