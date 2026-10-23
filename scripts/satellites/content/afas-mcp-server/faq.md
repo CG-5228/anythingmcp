@@ -8,7 +8,7 @@ In AFAS Profit, open **Algemeen → Beheer → App connector**, create an app co
 Yes. AFAS exposes only the GetConnectors you add to the app connector. `afas_profit_list_connectors` lists everything published to your token, `afas_profit_get_connector_metadata` inspects a GetConnector's field IDs and types, and `afas_profit_get_data` queries rows from any GetConnector using AFAS's filter and sort parameters.
 
 ### Can the AI change data in AFAS Profit?
-No. All 6 tools are HTTP GET requests against GetConnectors, and UpdateConnectors are deliberately not exposed. The AI can only read from the GetConnectors you explicitly add to the app connector in AFAS.
+No. All 6 tools are read-only HTTP GET requests (4 query GetConnectors and 2 inspect `/metainfo`), and UpdateConnectors are deliberately not exposed. The AI can only read from the GetConnectors you explicitly add to the app connector in AFAS.
 
 ### Has this been tested against a live AFAS environment?
 Not yet: the adapter follows AFAS's published REST API documentation (`docs.afas.help`) and standard GetConnector schemas. If you use AFAS Profit, a report of what works is very welcome.

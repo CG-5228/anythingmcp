@@ -1,7 +1,7 @@
 - Which administrations (divisions) can this account reach, and what is my current division?
 - Which receivables are overdue, and how much is still open per customer?
 - Show the sales invoices we issued this month with their totals and status.
-- Which sales invoices over 5,000 EUR are still open?
+- Which sales invoices over 5,000 EUR are still unpaid?
 - Find the account record for "Van Dijk Logistics" and show its code, VAT number and status.
 - List the accounts marked as suppliers with their codes and VAT numbers.
 - Which purchase entries (inkoopboekingen) fall due in the next 14 days?
@@ -10,5 +10,5 @@
 - Which items in the catalogue match "solar panel", and what are their sales and cost prices?
 - Which warehouse items have current stock at or below zero?
 - Compare this quarter's sales invoice total with last quarter's.
-- List the general ledger accounts on the profit and loss side with their codes and descriptions.
+- List the general ledger accounts and tell me which ones are profit and loss accounts.
 - Which customers owe us more than 10,000 EUR across all open receivables?
